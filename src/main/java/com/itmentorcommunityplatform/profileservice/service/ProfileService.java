@@ -4,6 +4,7 @@ import com.itmentorcommunityplatform.profileservice.domain.Profile;
 import com.itmentorcommunityplatform.profileservice.domain.ProfileDetail;
 import com.itmentorcommunityplatform.profileservice.domain.type.ProfileDetailType;
 import com.itmentorcommunityplatform.profileservice.dto.event.ProjectCreatedEvent;
+import com.itmentorcommunityplatform.profileservice.dto.event.UserAuthenticatedEvent;
 import com.itmentorcommunityplatform.profileservice.dto.event.UserCreatedEvent;
 import com.itmentorcommunityplatform.profileservice.exception.ProfileNotFoundException;
 import com.itmentorcommunityplatform.profileservice.repository.ProfileRepository;
@@ -72,6 +73,47 @@ public class ProfileService {
             profileRepository.save(newProfile);
             log.info("Successfully created profile with telegramUserId: {}", telegramUserId);
         }
+    }
+
+    @Transactional
+    public void upsertProfile(UserAuthenticatedEvent event) {
+        if (event == null || event.getTelegramUserId() == null) {
+            log.warn("Received empty event or null telegramUserId. Skipping.");
+            return;
+        }
+
+        Long telegramUserId = event.getTelegramUserId();
+        log.info("Attempting to update profile for telegramUserId: {}", telegramUserId);
+
+        Optional<Profile> existingProfile = profileRepository.findByTelegramUserId(telegramUserId);
+        if (existingProfile.isEmpty()) {
+            log.warn("Profile for telegramUserId: {} not found. Skipping.", telegramUserId);
+            return;
+        }
+
+        Set<ProfileDetail> existingDetails = existingProfile.get().getDetails();
+        Map<String, String> newDetails = new HashMap<>();
+
+        if (event.getTelegramUsername() != null && !event.getTelegramUsername().isBlank()) {
+            newDetails.put(ProfileDetailType.TELEGRAM_URL.getDetailName(), "https://t.me/" + event.getTelegramUsername());
+        }
+        if (event.getFirstName() != null && !event.getFirstName().isBlank()) {
+            newDetails.put(ProfileDetailType.FIRST_NAME.getDetailName(), event.getFirstName());
+        }
+        if (event.getLastName() != null && !event.getLastName().isBlank()) {
+            newDetails.put(ProfileDetailType.LAST_NAME.getDetailName(), event.getLastName());
+        }
+
+        Set<ProfileDetail> details = mergeProfileDetails(existingDetails, newDetails);
+        if (existingDetails.equals(details)) {
+            log.info("Same details found. Nothing to update for telegramUserId: {}", telegramUserId);
+            return;
+        }
+
+        Profile profile = existingProfile.get();
+        profile.setDetails(details);
+        profileRepository.save(profile);
+        log.info("Successfully updated profile with telegramUserId: {}", telegramUserId);
     }
 
     @Transactional(readOnly = true)
